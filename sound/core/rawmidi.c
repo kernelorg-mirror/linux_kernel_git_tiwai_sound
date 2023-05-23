@@ -796,6 +796,7 @@ static int snd_rawmidi_input_status(struct snd_rawmidi_substream *substream,
 static long snd_rawmidi_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct snd_rawmidi_file *rfile;
+	struct snd_rawmidi *rmidi;
 	void __user *argp = (void __user *)arg;
 
 	rfile = file->private_data;
@@ -910,8 +911,10 @@ static long snd_rawmidi_ioctl(struct file *file, unsigned int cmd, unsigned long
 		}
 	}
 	default:
-		rmidi_dbg(rfile->rmidi,
-			  "rawmidi: unknown command = 0x%x\n", cmd);
+		rmidi = rfile->rmidi;
+		if (rmidi->ops && rmidi->ops->ioctl)
+			return rmidi->ops->ioctl(rmidi, cmd, argp);
+		rmidi_dbg(rmidi, "rawmidi: unknown command = 0x%x\n", cmd);
 	}
 	return -ENOTTY;
 }
