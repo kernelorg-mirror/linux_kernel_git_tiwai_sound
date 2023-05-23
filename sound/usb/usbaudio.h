@@ -48,6 +48,7 @@ struct snd_usb_audio {
 	struct list_head iface_ref_list; /* list of interface refcounts */
 	int pcm_devs;
 
+	unsigned int num_rawmidis;	/* number of created rawmidi devices */
 	struct list_head midi_list;	/* list of midi interfaces */
 
 	struct list_head mixer_list;	/* list of mixer interfaces */
