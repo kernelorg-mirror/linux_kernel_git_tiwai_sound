@@ -14,3 +14,4 @@ Designs and Implementations
    powersave
    oss-emulation
    seq-oss
+   midi-2.0
