@@ -38,6 +38,7 @@ MODULE_PARM_DESC(input_buffer_size, "Input buffer size in bytes.");
 /* data for this midi synth driver */
 struct seq_midisynth {
 	struct snd_card *card;
+	struct snd_rawmidi *rmidi;
 	int device;
 	int subdevice;
 	struct snd_rawmidi_file input_rfile;
@@ -167,8 +168,7 @@ static int midisynth_subscribe(void *private_data, struct snd_seq_port_subscribe
 	struct snd_rawmidi_params params;
 
 	/* open midi port */
-	if ((err = snd_rawmidi_kernel_open(msynth->card, msynth->device,
-					   msynth->subdevice,
+	if ((err = snd_rawmidi_kernel_open(msynth->rmidi, msynth->subdevice,
 					   SNDRV_RAWMIDI_LFLG_INPUT,
 					   &msynth->input_rfile)) < 0) {
 		pr_debug("ALSA: seq_midi: midi input open failed!!!\n");
@@ -209,8 +209,7 @@ static int midisynth_use(void *private_data, struct snd_seq_port_subscribe *info
 	struct snd_rawmidi_params params;
 
 	/* open midi port */
-	if ((err = snd_rawmidi_kernel_open(msynth->card, msynth->device,
-					   msynth->subdevice,
+	if ((err = snd_rawmidi_kernel_open(msynth->rmidi, msynth->subdevice,
 					   SNDRV_RAWMIDI_LFLG_OUTPUT,
 					   &msynth->output_rfile)) < 0) {
 		pr_debug("ALSA: seq_midi: midi output open failed!!!\n");
@@ -323,6 +322,7 @@ snd_seq_midisynth_probe(struct device *_dev)
 
 	for (p = 0; p < ports; p++) {
 		ms = &msynth[p];
+		ms->rmidi = rmidi;
 
 		if (snd_seq_midisynth_new(ms, card, device, p) < 0)
 			goto __nomem;
