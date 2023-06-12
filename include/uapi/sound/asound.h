@@ -683,6 +683,9 @@ struct snd_rawmidi_status {
 	unsigned char reserved[16];	/* reserved for future use */
 };
 
+/* UMP EP info flags */
+#define SNDRV_UMP_EP_INFO_STATIC_BLOCKS		0x01
+
 /* UMP EP Protocol / JRTS capability bits */
 #define SNDRV_UMP_EP_INFO_PROTO_MIDI_MASK	0x0300
 #define SNDRV_UMP_EP_INFO_PROTO_MIDI1		0x0100 /* MIDI 1.0 */
