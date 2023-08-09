@@ -149,10 +149,7 @@ static const struct attribute_group card_dev_attr_group;
 
 static void release_card_device(struct device *dev)
 {
-	struct snd_card *card = dev_to_snd_card(dev);
-
-	if (!card->managed)
-		kfree(card);
+	kfree(dev_to_snd_card(dev));
 }
 
 /**
@@ -196,9 +193,15 @@ int snd_card_new(struct device *parent, int idx, const char *xid,
 }
 EXPORT_SYMBOL(snd_card_new);
 
+/* devres release for snd_devm_card_new() */
 static void __snd_card_release(struct device *dev, void *data)
 {
-	snd_card_free(data);
+	struct snd_card *card = *(struct snd_card **)data;
+
+	if (!card)
+		return;
+	snd_card_free(card);
+	put_device(&card->card_dev);
 }
 
 /**
@@ -231,21 +234,21 @@ int snd_devm_card_new(struct device *parent, int idx, const char *xid,
 		      struct snd_card **card_ret)
 {
 	struct snd_card *card;
+	struct snd_card **card_devres;
 	int err;
 
 	*card_ret = NULL;
-	card = devres_alloc(__snd_card_release, sizeof(*card) + extra_size,
-			    GFP_KERNEL);
-	if (!card)
+	card_devres = devres_alloc(__snd_card_release, sizeof(void *), GFP_KERNEL);
+	if (!card_devres)
 		return -ENOMEM;
-	card->managed = true;
-	err = snd_card_init(card, parent, idx, xid, module, extra_size);
-	if (err < 0) {
-		devres_free(card); /* in managed mode, we need to free manually */
-		return err;
-	}
+	devres_add(parent, card_devres);
 
-	devres_add(parent, card);
+	err = snd_card_new(parent, idx, xid, module, extra_size, &card);
+	if (err < 0)
+		return err;
+	card->managed = true;
+	get_device(&card->card_dev);
+	*card_devres = card;
 	*card_ret = card;
 	return 0;
 }
@@ -305,8 +308,7 @@ static int snd_card_init(struct snd_card *card, struct device *parent,
 		mutex_unlock(&snd_card_mutex);
 		dev_err(parent, "cannot find the slot for index %d (range 0-%i), error: %d\n",
 			 idx, snd_ecards_limit - 1, err);
-		if (!card->managed)
-			kfree(card); /* manually free here, as no destructor called */
+		kfree(card); /* manually free here, as no destructor called */
 		return err;
 	}
 	set_bit(idx, snd_cards_lock);		/* lock it */
