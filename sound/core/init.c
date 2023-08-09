@@ -145,12 +145,14 @@ EXPORT_SYMBOL_GPL(snd_device_alloc);
 static int snd_card_init(struct snd_card *card, struct device *parent,
 			 int idx, const char *xid, struct module *module,
 			 size_t extra_size);
-static int snd_card_do_free(struct snd_card *card);
 static const struct attribute_group card_dev_attr_group;
 
 static void release_card_device(struct device *dev)
 {
-	snd_card_do_free(dev_to_snd_card(dev));
+	struct snd_card *card = dev_to_snd_card(dev);
+
+	if (!card->managed)
+		kfree(card);
 }
 
 /**
@@ -336,6 +338,7 @@ static int snd_card_init(struct snd_card *card, struct device *parent,
 #endif
 	init_waitqueue_head(&card->remove_sleep);
 	card->sync_irq = -1;
+	kref_init(&card->card_ref);
 
 	device_initialize(&card->card_dev);
 	card->card_dev.parent = parent;
@@ -376,6 +379,25 @@ static int snd_card_init(struct snd_card *card, struct device *parent,
   	return err;
 }
 
+static void snd_card_ref_free(struct kref *kref);
+
+struct snd_card *snd_card_get(struct snd_card *card)
+{
+	if (!card)
+		return NULL;
+	kref_get(&card->card_ref);
+	return card;
+}
+EXPORT_SYMBOL_GPL(snd_card_get);
+
+void snd_card_put(struct snd_card *card)
+{
+	if (!card)
+		return;
+	kref_put(&card->card_ref, snd_card_ref_free);
+}
+EXPORT_SYMBOL_GPL(snd_card_put);
+
 /**
  * snd_card_ref - Get the card object from the index
  * @idx: the card index
@@ -391,10 +413,8 @@ struct snd_card *snd_card_ref(int idx)
 
 	mutex_lock(&snd_card_mutex);
 	card = snd_cards[idx];
-	if (card)
-		get_device(&card->card_dev);
 	mutex_unlock(&snd_card_mutex);
-	return card;
+	return snd_card_get(card);
 }
 EXPORT_SYMBOL_GPL(snd_card_ref);
 
@@ -580,8 +600,10 @@ void snd_card_disconnect_sync(struct snd_card *card)
 }
 EXPORT_SYMBOL_GPL(snd_card_disconnect_sync);
 
-static int snd_card_do_free(struct snd_card *card)
+static void snd_card_ref_free(struct kref *kref)
 {
+	struct snd_card *card = container_of(kref, struct snd_card, card_ref);
+
 	card->releasing = true;
 #if IS_ENABLED(CONFIG_SND_MIXER_OSS)
 	if (snd_mixer_oss_notify_callback)
@@ -600,9 +622,7 @@ static int snd_card_do_free(struct snd_card *card)
 #endif
 	if (card->release_completion)
 		complete(card->release_completion);
-	if (!card->managed)
-		kfree(card);
-	return 0;
+	put_device(&card->card_dev);
 }
 
 /**
@@ -622,7 +642,7 @@ void snd_card_free_when_closed(struct snd_card *card)
 		return;
 
 	snd_card_disconnect(card);
-	put_device(&card->card_dev);
+	snd_card_put(card);
 	return;
 }
 EXPORT_SYMBOL(snd_card_free_when_closed);
@@ -1082,7 +1102,7 @@ int snd_card_file_add(struct snd_card *card, struct file *file)
 		return -ENODEV;
 	}
 	list_add(&mfile->list, &card->files_list);
-	get_device(&card->card_dev);
+	snd_card_get(card);
 	spin_unlock(&card->files_lock);
 	return 0;
 }
@@ -1126,7 +1146,7 @@ int snd_card_file_remove(struct snd_card *card, struct file *file)
 		return -ENOENT;
 	}
 	kfree(found);
-	put_device(&card->card_dev);
+	snd_card_put(card);
 	return 0;
 }
 EXPORT_SYMBOL(snd_card_file_remove);

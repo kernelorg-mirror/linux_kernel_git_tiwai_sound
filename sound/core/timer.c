@@ -280,7 +280,7 @@ static int snd_timer_check_master(struct snd_timer_instance *master)
 }
 
 static void snd_timer_close_locked(struct snd_timer_instance *timeri,
-				   struct device **card_devp_to_put);
+				   struct snd_card **card_p_to_put);
 
 /*
  * open a timer instance
@@ -291,7 +291,7 @@ int snd_timer_open(struct snd_timer_instance *timeri,
 		   unsigned int slave_id)
 {
 	struct snd_timer *timer;
-	struct device *card_dev_to_put = NULL;
+	struct snd_card *card_to_put = NULL;
 	int err;
 
 	mutex_lock(&register_mutex);
@@ -350,8 +350,8 @@ int snd_timer_open(struct snd_timer_instance *timeri,
 	}
 	/* take a card refcount for safe disconnection */
 	if (timer->card) {
-		get_device(&timer->card->card_dev);
-		card_dev_to_put = &timer->card->card_dev;
+		snd_card_get(timer->card);
+		card_to_put = timer->card;
 	}
 
 	if (list_empty(&timer->open_list_head) && timer->hw.open) {
@@ -371,13 +371,13 @@ int snd_timer_open(struct snd_timer_instance *timeri,
 	err = snd_timer_check_master(timeri);
 list_added:
 	if (err < 0)
-		snd_timer_close_locked(timeri, &card_dev_to_put);
+		snd_timer_close_locked(timeri, &card_to_put);
 
  unlock:
 	mutex_unlock(&register_mutex);
 	/* put_device() is called after unlock for avoiding deadlock */
-	if (err < 0 && card_dev_to_put)
-		put_device(card_dev_to_put);
+	if (err < 0 && card_to_put)
+		snd_card_put(card_to_put);
 	return err;
 }
 EXPORT_SYMBOL(snd_timer_open);
@@ -387,7 +387,7 @@ EXPORT_SYMBOL(snd_timer_open);
  * call this with register_mutex down.
  */
 static void snd_timer_close_locked(struct snd_timer_instance *timeri,
-				   struct device **card_devp_to_put)
+				   struct snd_card **card_p_to_put)
 {
 	struct snd_timer *timer = timeri->timer;
 	struct snd_timer_instance *slave, *tmp;
@@ -444,7 +444,7 @@ static void snd_timer_close_locked(struct snd_timer_instance *timeri,
 			timer->hw.close(timer);
 		/* release a card refcount for safe disconnection */
 		if (timer->card)
-			*card_devp_to_put = &timer->card->card_dev;
+			*card_p_to_put = timer->card;
 		module_put(timer->module);
 	}
 }
@@ -454,17 +454,17 @@ static void snd_timer_close_locked(struct snd_timer_instance *timeri,
  */
 void snd_timer_close(struct snd_timer_instance *timeri)
 {
-	struct device *card_dev_to_put = NULL;
+	struct snd_card *card_to_put = NULL;
 
 	if (snd_BUG_ON(!timeri))
 		return;
 
 	mutex_lock(&register_mutex);
-	snd_timer_close_locked(timeri, &card_dev_to_put);
+	snd_timer_close_locked(timeri, &card_to_put);
 	mutex_unlock(&register_mutex);
 	/* put_device() is called after unlock for avoiding deadlock */
-	if (card_dev_to_put)
-		put_device(card_dev_to_put);
+	if (card_to_put)
+		snd_card_put(card_to_put);
 }
 EXPORT_SYMBOL(snd_timer_close);
 

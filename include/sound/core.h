@@ -121,6 +121,7 @@ struct snd_card {
 	struct completion *release_completion;
 	struct device *dev;		/* device assigned to this card */
 	struct device card_dev;		/* cardX object for sysfs */
+	struct kref card_ref;		/* refcount for card object */
 	const struct attribute_group *dev_groups[4]; /* assigned sysfs attr */
 	bool registered;		/* card_dev is registered? */
 	bool managed;			/* managed via devres */
@@ -301,6 +302,8 @@ int snd_card_file_add(struct snd_card *card, struct file *file);
 int snd_card_file_remove(struct snd_card *card, struct file *file);
 
 struct snd_card *snd_card_ref(int card);
+struct snd_card *snd_card_get(struct snd_card *card);
+void snd_card_put(struct snd_card *card);
 
 /**
  * snd_card_unref - Unreference the card object
@@ -311,7 +314,7 @@ struct snd_card *snd_card_ref(int card);
  */
 static inline void snd_card_unref(struct snd_card *card)
 {
-	put_device(&card->card_dev);
+	snd_card_put(card);
 }
 
 #define snd_card_set_dev(card, devptr) ((card)->dev = (devptr))
