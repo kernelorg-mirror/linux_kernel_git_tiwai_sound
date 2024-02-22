@@ -93,12 +93,12 @@ static int azx_pcm_close(struct snd_pcm_substream *substream)
 	struct azx_dev *azx_dev = get_azx_dev(substream);
 
 	trace_azx_pcm_close(chip, azx_dev);
-	mutex_lock(&chip->open_mutex);
-	azx_release_device(azx_dev);
-	if (hinfo->ops.close)
-		hinfo->ops.close(hinfo, apcm->codec, substream);
-	snd_hda_power_down(apcm->codec);
-	mutex_unlock(&chip->open_mutex);
+	scoped_guard(mutex, &chip->open_mutex) {
+		azx_release_device(azx_dev);
+		if (hinfo->ops.close)
+			hinfo->ops.close(hinfo, apcm->codec, substream);
+		snd_hda_power_down(apcm->codec);
+	}
 	snd_hda_codec_pcm_put(apcm->info);
 	return 0;
 }
@@ -252,32 +252,32 @@ static int azx_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		snd_pcm_trigger_done(s, substream);
 	}
 
-	spin_lock(&bus->reg_lock);
+	scoped_guard(spinlock, &bus->reg_lock) {
 
-	/* first, set SYNC bits of corresponding streams */
-	snd_hdac_stream_sync_trigger(hstr, true, sbits, sync_reg);
+		/* first, set SYNC bits of corresponding streams */
+		snd_hdac_stream_sync_trigger(hstr, true, sbits, sync_reg);
 
-	snd_pcm_group_for_each_entry(s, substream) {
-		if (s->pcm->card != substream->pcm->card)
-			continue;
-		azx_dev = get_azx_dev(s);
-		if (start) {
-			azx_dev->insufficient = 1;
-			snd_hdac_stream_start(azx_stream(azx_dev));
-		} else {
-			snd_hdac_stream_stop(azx_stream(azx_dev));
+		snd_pcm_group_for_each_entry(s, substream) {
+			if (s->pcm->card != substream->pcm->card)
+				continue;
+			azx_dev = get_azx_dev(s);
+			if (start) {
+				azx_dev->insufficient = 1;
+				snd_hdac_stream_start(azx_stream(azx_dev));
+			} else {
+				snd_hdac_stream_stop(azx_stream(azx_dev));
+			}
 		}
 	}
-	spin_unlock(&bus->reg_lock);
 
 	snd_hdac_stream_sync(hstr, start, sbits);
 
-	spin_lock(&bus->reg_lock);
-	/* reset SYNC bits */
-	snd_hdac_stream_sync_trigger(hstr, false, sbits, sync_reg);
-	if (start)
-		snd_hdac_stream_timecounter_init(hstr, sbits);
-	spin_unlock(&bus->reg_lock);
+	scoped_guard(spinlock, &bus->reg_lock) {
+		/* reset SYNC bits */
+		snd_hdac_stream_sync_trigger(hstr, false, sbits, sync_reg);
+		if (start)
+			snd_hdac_stream_timecounter_init(hstr, sbits);
+	}
 	return 0;
 }
 
@@ -591,7 +591,7 @@ static int azx_pcm_open(struct snd_pcm_substream *substream)
 	int buff_step;
 
 	snd_hda_codec_pcm_get(apcm->info);
-	mutex_lock(&chip->open_mutex);
+	guard(mutex)(&chip->open_mutex);
 	azx_dev = azx_assign_device(chip, substream);
 	trace_azx_pcm_open(chip, azx_dev);
 	if (azx_dev == NULL) {
@@ -664,13 +664,11 @@ static int azx_pcm_open(struct snd_pcm_substream *substream)
 	}
 
 	snd_pcm_set_sync(substream);
-	mutex_unlock(&chip->open_mutex);
 	return 0;
 
  powerdown:
 	snd_hda_power_down(apcm->codec);
  unlock:
-	mutex_unlock(&chip->open_mutex);
 	snd_hda_codec_pcm_put(apcm->info);
 	return err;
 }
@@ -971,19 +969,18 @@ int snd_hda_codec_load_dsp_prepare(struct hda_codec *codec, unsigned int format,
 
 	azx_dev = azx_get_dsp_loader_dev(chip);
 	hstr = azx_stream(azx_dev);
-	spin_lock_irq(&bus->reg_lock);
-	if (hstr->opened) {
-		chip->saved_azx_dev = *azx_dev;
-		saved = true;
+	scoped_guard(spinlock_irq, &bus->reg_lock) {
+		if (hstr->opened) {
+			chip->saved_azx_dev = *azx_dev;
+			saved = true;
+		}
 	}
-	spin_unlock_irq(&bus->reg_lock);
 
 	err = snd_hdac_dsp_prepare(hstr, format, byte_size, bufp);
 	if (err < 0) {
-		spin_lock_irq(&bus->reg_lock);
+		guard(spinlock_irq)(&bus->reg_lock);
 		if (saved)
 			*azx_dev = chip->saved_azx_dev;
-		spin_unlock_irq(&bus->reg_lock);
 		return err;
 	}
 
@@ -1014,11 +1011,10 @@ void snd_hda_codec_load_dsp_cleanup(struct hda_codec *codec,
 		return;
 
 	snd_hdac_dsp_cleanup(hstr, dmab);
-	spin_lock_irq(&bus->reg_lock);
+	guard(spinlock_irq)(&bus->reg_lock);
 	if (hstr->opened)
 		*azx_dev = chip->saved_azx_dev;
 	hstr->locked = false;
-	spin_unlock_irq(&bus->reg_lock);
 }
 EXPORT_SYMBOL_GPL(snd_hda_codec_load_dsp_cleanup);
 #endif /* CONFIG_SND_HDA_DSP_LOADER */
@@ -1081,10 +1077,10 @@ irqreturn_t azx_interrupt(int irq, void *dev_id)
 			return IRQ_NONE;
 #endif
 
-	spin_lock(&bus->reg_lock);
+	guard(spinlock)(&bus->reg_lock);
 
 	if (chip->disabled)
-		goto unlock;
+		return IRQ_RETVAL(handled);
 
 	do {
 		status = azx_readl(chip, INTSTS);
@@ -1116,9 +1112,6 @@ irqreturn_t azx_interrupt(int irq, void *dev_id)
 		}
 	} while (active && ++repeat < 10);
 
- unlock:
-	spin_unlock(&bus->reg_lock);
-
 	return IRQ_RETVAL(handled);
 }
 EXPORT_SYMBOL_GPL(azx_interrupt);
@@ -1138,12 +1131,11 @@ static int probe_codec(struct azx *chip, int addr)
 	int err;
 	unsigned int res = -1;
 
-	mutex_lock(&bus->cmd_mutex);
+	guard(mutex)(&bus->cmd_mutex);
 	chip->probing = 1;
 	azx_send_cmd(bus, cmd);
 	err = azx_get_response(bus, addr, &res);
 	chip->probing = 0;
-	mutex_unlock(&bus->cmd_mutex);
 	if (err < 0 || res == -1)
 		return -EIO;
 	dev_dbg(chip->card->dev, "codec #%d probed OK\n", addr);
