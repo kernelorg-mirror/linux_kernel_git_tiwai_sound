@@ -1730,7 +1730,20 @@ static const struct action_ops snd_pcm_action_suspend = {
  */
 static int snd_pcm_suspend(struct snd_pcm_substream *substream)
 {
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
 	guard(pcm_stream_lock_irqsave)(substream);
+	/*
+	 * Release the paused stream before suspending if resume is not
+	 * supported, because:
+	 * PAUSED streams will not receive the suspend trigger and since the
+	 * driver does not support resuming streams, it is not going to be able
+	 * to handle them properly when the system resumes.
+	 */
+	if (runtime->state == SNDRV_PCM_STATE_PAUSED &&
+	    !(runtime->info & SNDRV_PCM_INFO_RESUME))
+		snd_pcm_pause(substream, false);
+
 	return snd_pcm_action(&snd_pcm_action_suspend, substream,
 			      ACTION_ARG_IGNORE);
 }
