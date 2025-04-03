@@ -730,6 +730,18 @@ static inline void __snd_pcm_set_state(struct snd_pcm_runtime *runtime,
 }
 
 /**
+ * __snd_pcm_set_state - Change the current PCM suspended_state
+ * @runtime: PCM runtime to set
+ * @state: the suspended state to set
+ */
+static inline void __snd_pcm_set_suspended_state(struct snd_pcm_runtime *runtime,
+						 snd_pcm_state_t state)
+{
+	runtime->suspended_state = state;
+	runtime->status->suspended_state = state; /* copy for mmap */
+}
+
+/**
  * bytes_to_samples - Unit conversion of the size from bytes to samples
  * @runtime: PCM runtime instance
  * @size: size in bytes

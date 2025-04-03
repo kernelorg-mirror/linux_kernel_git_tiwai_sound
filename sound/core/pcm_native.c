@@ -1669,7 +1669,7 @@ static int snd_pcm_pause_lock_irq(struct snd_pcm_substream *substream,
 }
 
 #ifdef CONFIG_PM
-/* suspend callback: state argument ignored */
+/* suspend callback: state = suspended_state to be saved */
 
 static int snd_pcm_pre_suspend(struct snd_pcm_substream *substream,
 			       snd_pcm_state_t state)
@@ -1706,9 +1706,8 @@ static void snd_pcm_post_suspend(struct snd_pcm_substream *substream,
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	snd_pcm_trigger_tstamp(substream);
-	runtime->suspended_state = runtime->state;
-	runtime->status->suspended_state = runtime->suspended_state;
 	__snd_pcm_set_state(runtime, SNDRV_PCM_STATE_SUSPENDED);
+	__snd_pcm_set_suspended_state(runtime, state);
 	snd_pcm_timer_notify(substream, SNDRV_TIMER_EVENT_MSUSPEND);
 	wake_up(&runtime->sleep);
 	wake_up(&runtime->tsleep);
@@ -1731,8 +1730,10 @@ static const struct action_ops snd_pcm_action_suspend = {
 static int snd_pcm_suspend(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	snd_pcm_state_t state;
 
 	guard(pcm_stream_lock_irqsave)(substream);
+	state = runtime->state;
 	/*
 	 * Release the paused stream before suspending if resume is not
 	 * supported, because:
@@ -1740,12 +1741,10 @@ static int snd_pcm_suspend(struct snd_pcm_substream *substream)
 	 * driver does not support resuming streams, it is not going to be able
 	 * to handle them properly when the system resumes.
 	 */
-	if (runtime->state == SNDRV_PCM_STATE_PAUSED &&
+	if (state == SNDRV_PCM_STATE_PAUSED &&
 	    !(runtime->info & SNDRV_PCM_INFO_RESUME))
 		snd_pcm_pause(substream, false);
-
-	return snd_pcm_action(&snd_pcm_action_suspend, substream,
-			      ACTION_ARG_IGNORE);
+	return snd_pcm_action(&snd_pcm_action_suspend, substream, state);
 }
 
 /**
