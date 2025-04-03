@@ -1666,6 +1666,9 @@ static int snd_pcm_pause_lock_irq(struct snd_pcm_substream *substream,
 }
 
 #ifdef CONFIG_PM
+/* defined later */
+static const struct action_ops snd_pcm_action_pause_release_suspend;
+
 /* suspend callback: state = suspended_state to be saved */
 
 static int snd_pcm_pre_suspend(struct snd_pcm_substream *substream,
@@ -1727,10 +1730,9 @@ static const struct action_ops snd_pcm_action_suspend = {
 static int snd_pcm_suspend(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	snd_pcm_state_t state;
+	const struct action_ops *ops;
 
 	guard(pcm_stream_lock_irqsave)(substream);
-	state = runtime->state;
 	/*
 	 * Release the paused stream before suspending if resume is not
 	 * supported, because:
@@ -1738,10 +1740,12 @@ static int snd_pcm_suspend(struct snd_pcm_substream *substream)
 	 * driver does not support resuming streams, it is not going to be able
 	 * to handle them properly when the system resumes.
 	 */
-	if (state == SNDRV_PCM_STATE_PAUSED &&
+	if (runtime->state == SNDRV_PCM_STATE_PAUSED &&
 	    !(runtime->info & SNDRV_PCM_INFO_RESUME))
-		snd_pcm_pause_release(substream);
-	return snd_pcm_action(&snd_pcm_action_suspend, substream, state);
+		ops = &snd_pcm_action_pause_release_suspend;
+	else
+		ops = &snd_pcm_action_suspend;
+	return snd_pcm_action(ops, substream, runtime->state);
 }
 
 /**
@@ -1851,6 +1855,70 @@ static int snd_pcm_resume(struct snd_pcm_substream *substream)
 }
 
 #endif /* CONFIG_PM */
+
+/*
+ * Release-and-stop the paused streams
+ */
+static int snd_pcm_pre_pause_release_stop(struct snd_pcm_substream *substream,
+					  snd_pcm_state_t state)
+{
+	return snd_pcm_pre_pause(substream, SNDRV_PCM_TRIGGER_PAUSE_RELEASE);
+}
+
+static int snd_pcm_do_pause_release_stop(struct snd_pcm_substream *substream,
+					 snd_pcm_state_t state)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	int err;
+
+	if (runtime->trigger_master != substream)
+		return 0;
+	runtime->hw_ptr_jiffies = jiffies - HZ * 1000;
+	if (substream->pcm->can_pause_release_stop) {
+		err = substream->ops->trigger(substream,
+					      SNDRV_PCM_TRIGGER_PAUSE_RELEASE_STOP);
+	} else {
+		err = substream->ops->trigger(substream,
+					      SNDRV_PCM_TRIGGER_PAUSE_RELEASE);
+		if (err >= 0)
+			substream->ops->trigger(substream, SNDRV_PCM_TRIGGER_STOP);
+	}
+	if (err < 0)
+		return err;
+	runtime->stop_operating = true;
+	return 0;
+}
+
+static void snd_pcm_undo_pause_release_stop(struct snd_pcm_substream *substream,
+					    snd_pcm_state_t state)
+{
+	if (substream->runtime->trigger_master == substream)
+		substream->ops->trigger(substream, SNDRV_PCM_TRIGGER_PAUSE_PUSH);
+}
+
+static const struct action_ops snd_pcm_action_pause_release_stop = {
+	.pre_action = snd_pcm_pre_pause_release_stop,
+	.do_action = snd_pcm_do_pause_release_stop,
+	.undo_action = snd_pcm_undo_pause_release_stop,
+	.post_action = snd_pcm_post_stop // reuse
+};
+
+// state = state to be set after stop
+static int snd_pcm_pause_release_stop(struct snd_pcm_substream *substream,
+				      snd_pcm_state_t state)
+{
+	return snd_pcm_action(&snd_pcm_action_pause_release_stop, substream,
+			      state);
+}
+
+#ifdef CONFIG_PM
+static const struct action_ops snd_pcm_action_pause_release_suspend = {
+	.pre_action = snd_pcm_pre_pause_release_stop, // reuse
+	.do_action = snd_pcm_do_pause_release_stop, // reuse
+	.undo_action = snd_pcm_undo_pause_release_stop, // reuse
+	.post_action = snd_pcm_post_suspend // reuse
+};
+#endif
 
 /*
  * xrun ioctl
@@ -1996,8 +2064,9 @@ static int snd_pcm_prepare(struct snd_pcm_substream *substream,
 	scoped_guard(pcm_stream_lock_irq, substream) {
 		switch (substream->runtime->state) {
 		case SNDRV_PCM_STATE_PAUSED:
-			snd_pcm_pause_release(substream);
-			fallthrough;
+			snd_pcm_pause_release_stop(substream,
+						   SNDRV_PCM_STATE_SETUP);
+			break;
 		case SNDRV_PCM_STATE_SUSPENDED:
 			snd_pcm_stop(substream, SNDRV_PCM_STATE_SETUP);
 			break;
@@ -2222,9 +2291,10 @@ static int snd_pcm_drop(struct snd_pcm_substream *substream)
 	guard(pcm_stream_lock_irq)(substream);
 	/* resume pause */
 	if (runtime->state == SNDRV_PCM_STATE_PAUSED)
-		snd_pcm_pause_release(substream);
-
-	snd_pcm_stop(substream, SNDRV_PCM_STATE_SETUP);
+		snd_pcm_pause_release_stop(substream,
+					   SNDRV_PCM_STATE_SETUP);
+	else
+		snd_pcm_stop(substream, SNDRV_PCM_STATE_SETUP);
 	/* runtime->control->appl_ptr = runtime->status->hw_ptr; */
 
 	return result;

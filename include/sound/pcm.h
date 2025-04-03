@@ -95,13 +95,16 @@ struct snd_pcm_ops {
 #define SNDRV_PCM_IOCTL1_FIFO_SIZE	4
 #define SNDRV_PCM_IOCTL1_SYNC_ID	5
 
-#define SNDRV_PCM_TRIGGER_STOP		0
-#define SNDRV_PCM_TRIGGER_START		1
-#define SNDRV_PCM_TRIGGER_PAUSE_PUSH	2
-#define SNDRV_PCM_TRIGGER_PAUSE_RELEASE	3
-#define SNDRV_PCM_TRIGGER_SUSPEND	4
-#define SNDRV_PCM_TRIGGER_RESUME	5
-#define SNDRV_PCM_TRIGGER_DRAIN		6
+enum {
+	SNDRV_PCM_TRIGGER_STOP,
+	SNDRV_PCM_TRIGGER_START,
+	SNDRV_PCM_TRIGGER_PAUSE_PUSH,
+	SNDRV_PCM_TRIGGER_PAUSE_RELEASE,
+	SNDRV_PCM_TRIGGER_PAUSE_RELEASE_STOP,
+	SNDRV_PCM_TRIGGER_SUSPEND,
+	SNDRV_PCM_TRIGGER_RESUME,
+	SNDRV_PCM_TRIGGER_DRAIN,
+};
 
 #define SNDRV_PCM_POS_XRUN		((snd_pcm_uframes_t)-1)
 
@@ -548,6 +551,7 @@ struct snd_pcm {
 	bool internal; /* pcm is for internal use only */
 	bool nonatomic; /* whole PCM operations are in non-atomic context */
 	bool no_device_suspend; /* don't invoke device PM suspend */
+	bool can_pause_release_stop; /* support PAUSE release-and-stop trigger */
 #if IS_ENABLED(CONFIG_SND_PCM_OSS)
 	struct snd_pcm_oss oss;
 #endif
