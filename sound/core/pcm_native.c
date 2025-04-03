@@ -1829,6 +1829,7 @@ static void snd_pcm_post_resume(struct snd_pcm_substream *substream,
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	snd_pcm_trigger_tstamp(substream);
 	__snd_pcm_set_state(runtime, runtime->suspended_state);
+	__snd_pcm_set_suspended_state(runtime, SNDRV_PCM_STATE_OPEN);
 	snd_pcm_timer_notify(substream, SNDRV_TIMER_EVENT_MRESUME);
 }
 
@@ -1969,6 +1970,7 @@ static void snd_pcm_post_prepare(struct snd_pcm_substream *substream,
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	runtime->control->appl_ptr = runtime->status->hw_ptr;
 	snd_pcm_set_state(substream, SNDRV_PCM_STATE_PREPARED);
+	__snd_pcm_set_suspended_state(runtime, SNDRV_PCM_STATE_OPEN);
 }
 
 static const struct action_ops snd_pcm_action_prepare = {
