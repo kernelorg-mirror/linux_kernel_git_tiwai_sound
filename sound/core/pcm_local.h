@@ -64,6 +64,8 @@ static inline void snd_pcm_timer_done(struct snd_pcm_substream *substream) {}
 void __snd_pcm_xrun(struct snd_pcm_substream *substream);
 void snd_pcm_group_init(struct snd_pcm_group *group);
 void snd_pcm_sync_stop(struct snd_pcm_substream *substream, bool sync_irq);
+int snd_pcm_pause_release_stop(struct snd_pcm_substream *substream,
+			       snd_pcm_state_t state);
 
 #define PCM_RUNTIME_CHECK(sub) snd_BUG_ON(!(sub) || !(sub)->runtime)
 

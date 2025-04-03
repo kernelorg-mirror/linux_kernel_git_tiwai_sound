@@ -177,7 +177,10 @@ void __snd_pcm_xrun(struct snd_pcm_substream *substream)
 		runtime->status->tstamp.tv_sec = tstamp.tv_sec;
 		runtime->status->tstamp.tv_nsec = tstamp.tv_nsec;
 	}
-	snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
+	if (runtime->state == SNDRV_PCM_STATE_PAUSED)
+		snd_pcm_pause_release_stop(substream, SNDRV_PCM_STATE_XRUN);
+	else
+		snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
 	if (xrun_debug(substream, XRUN_DEBUG_BASIC)) {
 		char name[16];
 		snd_pcm_debug_name(substream, name, sizeof(name));

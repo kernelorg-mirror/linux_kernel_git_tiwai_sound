@@ -1577,7 +1577,9 @@ int snd_pcm_drain_done(struct snd_pcm_substream *substream)
 int snd_pcm_stop_xrun(struct snd_pcm_substream *substream)
 {
 	guard(pcm_stream_lock_irqsave)(substream);
-	if (substream->runtime && snd_pcm_running(substream))
+	if (substream->runtime &&
+	    (snd_pcm_running(substream) ||
+	     substream->runtime->state == SNDRV_PCM_STATE_PAUSED))
 		__snd_pcm_xrun(substream);
 	return 0;
 }
@@ -1904,8 +1906,8 @@ static const struct action_ops snd_pcm_action_pause_release_stop = {
 };
 
 // state = state to be set after stop
-static int snd_pcm_pause_release_stop(struct snd_pcm_substream *substream,
-				      snd_pcm_state_t state)
+int snd_pcm_pause_release_stop(struct snd_pcm_substream *substream,
+			       snd_pcm_state_t state)
 {
 	return snd_pcm_action(&snd_pcm_action_pause_release_stop, substream,
 			      state);
@@ -1930,15 +1932,14 @@ static int snd_pcm_xrun(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
 	guard(pcm_stream_lock_irq)(substream);
-	switch (runtime->state) {
-	case SNDRV_PCM_STATE_XRUN:
+	if (runtime->state == SNDRV_PCM_STATE_XRUN)
 		return 0;	/* already there */
-	case SNDRV_PCM_STATE_RUNNING:
+	if (snd_pcm_running(substream) ||
+	    substream->runtime->state == SNDRV_PCM_STATE_PAUSED) {
 		__snd_pcm_xrun(substream);
 		return 0;
-	default:
-		return -EBADFD;
 	}
+	return -EBADFD;
 }
 
 /*
