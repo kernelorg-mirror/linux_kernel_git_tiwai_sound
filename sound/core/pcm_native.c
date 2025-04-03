@@ -1586,15 +1586,13 @@ EXPORT_SYMBOL_GPL(snd_pcm_stop_xrun);
 /*
  * pause callbacks: pass boolean (to start pause or resume) as state argument
  */
-#define pause_pushed(state)	(__force bool)(state)
-
 static int snd_pcm_pre_pause(struct snd_pcm_substream *substream,
 			     snd_pcm_state_t state)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	if (!(runtime->info & SNDRV_PCM_INFO_PAUSE))
 		return -ENOSYS;
-	if (pause_pushed(state)) {
+	if (state == SNDRV_PCM_TRIGGER_PAUSE_PUSH) {
 		if (runtime->state != SNDRV_PCM_STATE_RUNNING)
 			return -EBADFD;
 	} else if (runtime->state != SNDRV_PCM_STATE_PAUSED)
@@ -1613,10 +1611,7 @@ static int snd_pcm_do_pause(struct snd_pcm_substream *substream,
 	 * delta, effectively to skip the check once.
 	 */
 	substream->runtime->hw_ptr_jiffies = jiffies - HZ * 1000;
-	return substream->ops->trigger(substream,
-				       pause_pushed(state) ?
-				       SNDRV_PCM_TRIGGER_PAUSE_PUSH :
-				       SNDRV_PCM_TRIGGER_PAUSE_RELEASE);
+	return substream->ops->trigger(substream, state);
 }
 
 static void snd_pcm_undo_pause(struct snd_pcm_substream *substream,
@@ -1624,7 +1619,7 @@ static void snd_pcm_undo_pause(struct snd_pcm_substream *substream,
 {
 	if (substream->runtime->trigger_master == substream)
 		substream->ops->trigger(substream,
-					pause_pushed(state) ?
+					state == SNDRV_PCM_TRIGGER_PAUSE_PUSH ?
 					SNDRV_PCM_TRIGGER_PAUSE_RELEASE :
 					SNDRV_PCM_TRIGGER_PAUSE_PUSH);
 }
@@ -1634,7 +1629,7 @@ static void snd_pcm_post_pause(struct snd_pcm_substream *substream,
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	snd_pcm_trigger_tstamp(substream);
-	if (pause_pushed(state)) {
+	if (state == SNDRV_PCM_TRIGGER_PAUSE_PUSH) {
 		__snd_pcm_set_state(runtime, SNDRV_PCM_STATE_PAUSED);
 		snd_pcm_timer_notify(substream, SNDRV_TIMER_EVENT_MPAUSE);
 		wake_up(&runtime->sleep);
@@ -1655,17 +1650,19 @@ static const struct action_ops snd_pcm_action_pause = {
 /*
  * Push/release the pause for all linked streams.
  */
-static int snd_pcm_pause(struct snd_pcm_substream *substream, bool push)
+static int snd_pcm_pause_release(struct snd_pcm_substream *substream)
 {
 	return snd_pcm_action(&snd_pcm_action_pause, substream,
-			      (__force snd_pcm_state_t)push);
+			      SNDRV_PCM_TRIGGER_PAUSE_RELEASE);
 }
 
 static int snd_pcm_pause_lock_irq(struct snd_pcm_substream *substream,
 				  bool push)
 {
-	return snd_pcm_action_lock_irq(&snd_pcm_action_pause, substream,
-				       (__force snd_pcm_state_t)push);
+	snd_pcm_state_t state = push ?
+		SNDRV_PCM_TRIGGER_PAUSE_PUSH : SNDRV_PCM_TRIGGER_PAUSE_RELEASE;
+
+	return snd_pcm_action_lock_irq(&snd_pcm_action_pause, substream, state);
 }
 
 #ifdef CONFIG_PM
@@ -1743,7 +1740,7 @@ static int snd_pcm_suspend(struct snd_pcm_substream *substream)
 	 */
 	if (state == SNDRV_PCM_STATE_PAUSED &&
 	    !(runtime->info & SNDRV_PCM_INFO_RESUME))
-		snd_pcm_pause(substream, false);
+		snd_pcm_pause_release(substream);
 	return snd_pcm_action(&snd_pcm_action_suspend, substream, state);
 }
 
@@ -1999,7 +1996,7 @@ static int snd_pcm_prepare(struct snd_pcm_substream *substream,
 	scoped_guard(pcm_stream_lock_irq, substream) {
 		switch (substream->runtime->state) {
 		case SNDRV_PCM_STATE_PAUSED:
-			snd_pcm_pause(substream, false);
+			snd_pcm_pause_release(substream);
 			fallthrough;
 		case SNDRV_PCM_STATE_SUSPENDED:
 			snd_pcm_stop(substream, SNDRV_PCM_STATE_SETUP);
@@ -2120,7 +2117,7 @@ static int snd_pcm_drain(struct snd_pcm_substream *substream,
 	snd_pcm_stream_lock_irq(substream);
 	/* resume pause */
 	if (runtime->state == SNDRV_PCM_STATE_PAUSED)
-		snd_pcm_pause(substream, false);
+		snd_pcm_pause_release(substream);
 
 	/* pre-start/stop - all running streams are changed to DRAINING state */
 	result = snd_pcm_action(&snd_pcm_action_drain_init, substream,
@@ -2225,7 +2222,7 @@ static int snd_pcm_drop(struct snd_pcm_substream *substream)
 	guard(pcm_stream_lock_irq)(substream);
 	/* resume pause */
 	if (runtime->state == SNDRV_PCM_STATE_PAUSED)
-		snd_pcm_pause(substream, false);
+		snd_pcm_pause_release(substream);
 
 	snd_pcm_stop(substream, SNDRV_PCM_STATE_SETUP);
 	/* runtime->control->appl_ptr = runtime->status->hw_ptr; */
