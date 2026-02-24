@@ -117,8 +117,14 @@ static int add_generic_uac2_implicit_fb(struct snd_usb_audio *chip,
 	struct usb_endpoint_descriptor *epd;
 
 	alts = snd_usb_get_host_interface(chip, ifnum, altsetting);
-	if (!alts)
-		return 0;
+	if (!alts) {
+		if (altsetting <= 1)
+			return 0;
+		/* There can be multiple altsets synced from a single src */
+		alts = snd_usb_get_host_interface(chip, ifnum, 1);
+		if (!alts)
+			return 0;
+	}
 	if (alts->desc.bInterfaceClass != USB_CLASS_AUDIO ||
 	    alts->desc.bInterfaceSubClass != USB_SUBCLASS_AUDIOSTREAMING ||
 	    alts->desc.bInterfaceProtocol != UAC_VERSION_2 ||
