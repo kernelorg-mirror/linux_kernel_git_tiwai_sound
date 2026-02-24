@@ -1273,6 +1273,83 @@ static int __snd_usb_parse_audio_interface(struct snd_usb_audio *chip,
 	return 0;
 }
 
+/* return the possible max frame bytes */
+static int get_max_frame_bytes(const struct audioformat *fp)
+{
+	int max_frame_bytes, frame_bytes;
+	snd_pcm_format_t f;
+
+	max_frame_bytes = 0;
+	pcm_for_each_format(f) {
+		if (!(fp->formats & (1ULL << (__force int)f)))
+			continue;
+		frame_bytes = snd_pcm_format_physical_width(f) *
+			fp->channels / 8;
+		if (f == SNDRV_PCM_FORMAT_DSD_U16_LE && fp->dsd_dop)
+			frame_bytes += fp->channels;
+		if (frame_bytes > max_frame_bytes)
+			max_frame_bytes = frame_bytes;
+	}
+	return max_frame_bytes;
+}
+
+/* reduce maxpacksize of an implicit fb sync to fit with the given playback */
+static void align_capture_maxpacksize(struct snd_usb_audio *chip,
+				      struct snd_usb_substream *capt_subs,
+				      const struct audioformat *sink_fp)
+{
+	struct audioformat *fp;
+	int sink_maxpack, maxpack;
+	int frame_bytes;
+
+	if (!sink_fp->implicit_fb)
+		return;
+	if (sink_fp->attributes & UAC_EP_CS_ATTR_FILL_MAX)
+		return;
+
+	frame_bytes = get_max_frame_bytes(sink_fp);
+	if (!frame_bytes)
+		return;
+
+	sink_maxpack = sink_fp->maxpacksize / frame_bytes;
+	list_for_each_entry(fp, &capt_subs->fmt_list, list) {
+		if (!(fp->formats & sink_fp->formats))
+			continue;
+		if (fp->attributes & UAC_EP_CS_ATTR_FILL_MAX)
+			return;
+		if (fp->endpoint == sink_fp->sync_ep &&
+		    fp->iface == sink_fp->sync_iface &&
+		    fp->altsetting == sink_fp->sync_altsetting) {
+			frame_bytes = get_max_frame_bytes(fp);
+			if (!frame_bytes)
+				continue;
+			maxpack = fp->maxpacksize / frame_bytes;
+			if (sink_maxpack < maxpack) {
+				dev_dbg(&chip->dev->dev,
+					"reduce maxpacksize for sync ep %d: %d->%d (frames)\n",
+					fp->endpoint, maxpack, sink_maxpack);
+				fp->maxpacksize = sink_maxpack * frame_bytes;
+			}
+		}
+	}
+}
+
+/* reduce maxpacksize of implicit fb syncs appropriately */
+static void align_implicit_fb_maxpacksize(struct snd_usb_audio *chip)
+{
+	struct snd_usb_stream *as;
+	struct snd_usb_substream *subs;
+	struct audioformat *fp;
+
+	list_for_each_entry(as, &chip->pcm_list, list) {
+		subs = &as->substream[SNDRV_PCM_STREAM_PLAYBACK];
+		list_for_each_entry(fp, &subs->fmt_list, list)
+			align_capture_maxpacksize(chip,
+						  &as->substream[SNDRV_PCM_STREAM_CAPTURE],
+						  fp);
+	}
+}
+
 int snd_usb_parse_audio_interface(struct snd_usb_audio *chip, int iface_no)
 {
 	int err;
@@ -1290,6 +1367,6 @@ int snd_usb_parse_audio_interface(struct snd_usb_audio *chip, int iface_no)
 			return err;
 	}
 
+	align_implicit_fb_maxpacksize(chip);
 	return 0;
 }
-
